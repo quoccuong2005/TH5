@@ -1,5 +1,5 @@
 // src/screens/ChatDetailScreen.js
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,54 +8,76 @@ import {
   TouchableOpacity,
   FlatList,
   StyleSheet,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@react-native-vector-icons/ionicons/static';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
+import { conversationId, formatTime, orderedMessages } from '../services/chatModel';
+import { observeChat, sendMessage } from '../services/chatService';
+import { currentLocation, openLocation } from '../services/locationService';
+import { errorMessage } from '../services/errors';
 import { useApp } from '../context/AppContext';
 
 export default function ChatDetailScreen({ route, navigation }) {
-  const { conversation: initialConv, contactData } = route.params || {};
-  const { conversations, sendMessage, markConversationAsRead } = useApp();
+  const { peerId } = route.params;
+  const { user, contacts, markConversationAsRead, appActive } = useApp();
   const [inputText, setInputText] = useState('');
+  const [chat, setChat] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const [locating, setLocating] = useState(false);
   const flatListRef = useRef(null);
+  const focused = useIsFocused();
+  const uid = user.id;
+  const id = conversationId(uid, peerId);
+  const targetUser = contacts.find(contact => contact.id === peerId) || { name: 'Người dùng', isOnline: false };
+  const messages = useMemo(() => orderedMessages(chat?.messages), [chat]);
+  const latestKey = messages[messages.length - 1]?.id;
 
-  // Lấy dữ liệu cuộc trò chuyện mới nhất từ AppContext
-  const currentConversation = useMemo(() => {
-    const found = conversations.find((c) => c.id === initialConv?.id);
-    return found || initialConv;
-  }, [conversations, initialConv]);
-
-  // Đánh dấu đã đọc khi mở màn hình
   useEffect(() => {
-    if (currentConversation?.id) {
-      markConversationAsRead(currentConversation.id);
+    setLoading(true); setError(''); setChat(null);
+    return observeChat(id, data => { setChat(data); setLoading(false); }, failure => {
+      setError(errorMessage(failure)); setLoading(false);
+    });
+  }, [id]);
+
+  useEffect(() => {
+    if (focused && appActive && latestKey) {
+      markConversationAsRead(id, latestKey).catch(failure => setError(errorMessage(failure)));
     }
-  }, [currentConversation?.id]);
+  }, [id, latestKey, focused, appActive, markConversationAsRead]);
 
-  const messages = currentConversation?.messages || [];
-  const targetUser = currentConversation?.user || contactData || {
-    name: 'Người dùng',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
-    isOnline: false,
+  const handleSend = async () => {
+    if (!inputText.trim() || sending) { return; }
+    const text = inputText;
+    setSending(true); setError('');
+    try {
+      await sendMessage(uid, peerId, { type: 'text', text });
+      setInputText(current => current === text ? '' : current);
+    } catch (failure) { setError(errorMessage(failure)); }
+    finally { setSending(false); }
   };
-
-  const handleSend = () => {
-    if (!inputText.trim()) return;
-
-    sendMessage(currentConversation?.id || `conv_${targetUser.id}`, inputText, contactData);
-    setInputText('');
-
-    // Cuộn xuống cuối sau khi gửi
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+  const handleLocation = async () => {
+    if (locating) { return; }
+    setLocating(true);
+    try {
+      const coordinates = await currentLocation();
+      await sendMessage(uid, peerId, { type: 'location', ...coordinates });
+    } catch (failure) { Alert.alert('Không thể gửi vị trí', errorMessage(failure)); }
+    finally { setLocating(false); }
   };
+  const handleOpenLocation = useCallback(item => {
+    openLocation(item.latitude, item.longitude).catch(() => Alert.alert('Không mở được bản đồ', 'Vui lòng thử lại.'));
+  }, []);
 
   const renderMessageItem = ({ item }) => {
-    const isSender = item.isSender;
+    const isSender = item.senderId === uid;
 
     return (
       <View
@@ -74,14 +96,15 @@ export default function ChatDetailScreen({ route, navigation }) {
             isSender ? styles.bubbleSender : styles.bubbleReceiver,
           ]}
         >
-          <Text
-            style={[
-              styles.messageText,
-              isSender ? styles.messageTextSender : styles.messageTextReceiver,
-            ]}
-          >
-            {item.text}
-          </Text>
+          {item.type === 'location' ? (
+            <TouchableOpacity accessibilityRole="link" accessibilityLabel="Mở vị trí trên Google Maps" onPress={() => handleOpenLocation(item)} style={styles.locationCard}>
+              <Ionicons name="location" size={30} color={isSender ? '#fff' : '#4F46E5'} />
+              <Text style={[styles.locationTitle, isSender ? styles.messageTextSender : styles.messageTextReceiver]}>Vị trí hiện tại</Text>
+              <Text style={isSender ? styles.messageTextSender : styles.messageTextReceiver}>{item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}</Text>
+              <Text style={isSender ? styles.messageTimeSender : styles.messageTimeReceiver}>Nhấn để mở Google Maps ↗</Text>
+            </TouchableOpacity>
+          ) : <Text style={[styles.messageText, isSender ? styles.messageTextSender : styles.messageTextReceiver]}>{item.text}</Text>}
+
 
           <View style={styles.messageMeta}>
             <Text
@@ -90,7 +113,7 @@ export default function ChatDetailScreen({ route, navigation }) {
                 isSender ? styles.messageTimeSender : styles.messageTimeReceiver,
               ]}
             >
-              {item.time}
+              {formatTime(item.createdAt)}
             </Text>
             {isSender && (
               <Ionicons
@@ -134,16 +157,11 @@ export default function ChatDetailScreen({ route, navigation }) {
           </Text>
         </View>
 
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.headerActionBtn}>
-            <Ionicons name="call-outline" size={20} color="#4F46E5" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.headerActionBtn}>
-            <Ionicons name="videocam-outline" size={20} color="#4F46E5" />
-          </TouchableOpacity>
-        </View>
+
       </View>
 
+      {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
+      {loading && <ActivityIndicator color="#4F46E5" />}
       {/* Nội dung danh sách tin nhắn */}
       <KeyboardAvoidingView
         style={styles.chatArea}
@@ -170,8 +188,8 @@ export default function ChatDetailScreen({ route, navigation }) {
 
         {/* Thanh nhập tin nhắn */}
         <View style={styles.inputContainer}>
-          <TouchableOpacity style={styles.attachBtn}>
-            <Ionicons name="add-circle-outline" size={24} color="#6B7280" />
+          <TouchableOpacity style={styles.attachBtn} accessibilityLabel="Gửi vị trí hiện tại" onPress={handleLocation} disabled={locating}>
+            {locating ? <ActivityIndicator color="#4F46E5" /> : <Ionicons name="location-outline" size={24} color="#4F46E5" />}
           </TouchableOpacity>
 
           <TextInput
@@ -181,6 +199,7 @@ export default function ChatDetailScreen({ route, navigation }) {
             value={inputText}
             onChangeText={setInputText}
             multiline
+            maxLength={4000}
           />
 
           <TouchableOpacity
@@ -189,10 +208,10 @@ export default function ChatDetailScreen({ route, navigation }) {
               inputText.trim() ? styles.sendButtonActive : styles.sendButtonDisabled,
             ]}
             onPress={handleSend}
-            disabled={!inputText.trim()}
+            disabled={!inputText.trim() || sending}
           >
             <Ionicons
-              name="send"
+              name={sending ? 'hourglass-outline' : 'send'}
               size={18}
               color={inputText.trim() ? '#FFFFFF' : '#9CA3AF'}
             />
@@ -204,6 +223,9 @@ export default function ChatDetailScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
+  error: { color: '#B91C1C', backgroundColor: '#FEF2F2', padding: 12 },
+  locationCard: { padding: 8, gap: 6 },
+  locationTitle: { fontWeight: '700', fontSize: 16 },
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',

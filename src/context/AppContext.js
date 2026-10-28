@@ -1,153 +1,106 @@
-// src/context/AppContext.js
-import React, { createContext, useContext, useState, useMemo } from 'react';
-import {
-  currentUser as defaultUser,
-  initialConversations,
-  initialContacts,
-  initialNotifications,
-} from '../data/mockData';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { AppState } from 'react-native';
+import { initialNotifications } from '../data/mockData';
+import { firebaseConfigured } from '../services/firebase';
+import * as authService from '../services/authService';
+import { observeUsers, observePresence, observeChatIndex, observeChat, markRead, resumeDatabase } from '../services/chatService';
+import { conversationSummary, userProfile } from '../services/chatModel';
+import { startPresence } from '../services/presenceService';
+import { errorMessage } from '../services/errors';
 
 const AppContext = createContext();
-
-export const AppProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [conversations, setConversations] = useState(initialConversations);
-  const [contacts, setContacts] = useState(initialContacts);
+export function AppProvider({ children }) {
+  const [account, setAccount] = useState(null);
+  const [authLoading, setAuthLoading] = useState(firebaseConfigured);
+  const [profiles, setProfiles] = useState({});
+  const [statuses, setStatuses] = useState({});
+  const [chats, setChats] = useState({});
+  const [syncError, setSyncError] = useState('');
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [notifications, setNotifications] = useState(initialNotifications);
-
-  // Settings state (using Switch components)
   const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const reportError = useCallback(error => setSyncError(errorMessage(error)), []);
 
-  // Login handler
-  const login = (account) => {
-    setUser({
-      ...defaultUser,
-      username: account.startsWith('@') ? account : `@${account}`,
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => setAppActive(state === 'active'));
+    return () => listener.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseConfigured) { return; }
+    return authService.observeAuth(next => {
+      setProfiles({}); setStatuses({}); setChats({}); setSyncError('');
+      setAccount(next);
+      setAuthLoading(false);
     });
-    return true;
-  };
+  }, []);
 
-  // Logout handler
-  const logout = () => {
-    setUser(null);
-  };
-
-  // Mark a conversation as read
-  const markConversationAsRead = (conversationId) => {
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c))
-    );
-  };
-
-  // Send a message in a conversation
-  const sendMessage = (conversationId, text, contactData = null) => {
-    if (!text || !text.trim()) return;
-
-    const now = new Date();
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    const timeStr = `${hours}:${minutes}`;
-
-    const newMessage = {
-      id: `m_${Date.now()}`,
-      text: text.trim(),
-      time: timeStr,
-      isSender: true,
+  const uid = account?.uid;
+  useEffect(() => {
+    if (!uid) { return; }
+    let alive = true;
+    resumeDatabase();
+    authService.ensureProfile(account).catch(error => { if (alive) { reportError(error); } });
+    const stops = [observeUsers(setProfiles, reportError), observePresence(setStatuses, reportError)];
+    const chatStops = new Map();
+    stops.push(observeChatIndex(uid, index => {
+      for (const [id, stop] of chatStops) {
+        if (!index[id]) {
+          stop(); chatStops.delete(id);
+          setChats(previous => { const next = { ...previous }; delete next[id]; return next; });
+        }
+      }
+      Object.keys(index).forEach(id => {
+        if (chatStops.has(id)) { return; }
+        chatStops.set(id, observeChat(id, data => {
+          if (alive) { setChats(previous => ({ ...previous, [id]: data })); }
+        }, reportError));
+      });
+    }, reportError));
+    return () => {
+      alive = false;
+      stops.forEach(stop => stop());
+      chatStops.forEach(stop => stop());
     };
+  }, [uid, account, reportError]);
 
-    setConversations((prev) => {
-      const existingIndex = prev.findIndex((c) => c.id === conversationId);
+  useEffect(() => {
+    if (uid && appActive) { return startPresence(uid, reportError); }
+  }, [uid, appActive, reportError]);
 
-      if (existingIndex >= 0) {
-        const target = prev[existingIndex];
-        const updated = {
-          ...target,
-          lastMessage: text.trim(),
-          time: timeStr,
-          unreadCount: 0,
-          messages: [...target.messages, newMessage],
-        };
-        const rest = prev.filter((_, idx) => idx !== existingIndex);
-        return [updated, ...rest];
-      }
-
-      // If conversation doesn't exist yet (started from Contacts)
-      if (contactData) {
-        const newConversation = {
-          id: conversationId,
-          user: {
-            id: contactData.id,
-            name: contactData.name,
-            avatar: contactData.avatar,
-            isOnline: contactData.isOnline ?? false,
-          },
-          lastMessage: text.trim(),
-          time: timeStr,
-          unreadCount: 0,
-          messages: [newMessage],
-        };
-        return [newConversation, ...prev];
-      }
-
-      return prev;
-    });
-  };
-
-  // Mark single notification as read
-  const markNotificationAsRead = (notificationId) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
-    );
-  };
-
-  // Mark all notifications as read
-  const markAllNotificationsAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  };
-
-  // Calculated unread counters for badges
-  const totalUnreadMessages = useMemo(() => {
-    return conversations.reduce((acc, curr) => acc + (curr.unreadCount || 0), 0);
-  }, [conversations]);
-
-  const totalUnreadNotifications = useMemo(() => {
-    return notifications.filter((n) => !n.isRead).length;
-  }, [notifications]);
+  const contacts = useMemo(() => Object.entries(profiles)
+    .filter(([id]) => id !== uid)
+    .map(([id, profile]) => userProfile(id, profile, statuses[id]))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi')), [profiles, statuses, uid]);
+  const user = account ? { ...userProfile(uid, profiles[uid], statuses[uid]), email: account.email } : null;
+  const conversations = useMemo(() => Object.entries(chats)
+    .filter(([, data]) => data && (data.memberA === uid || data.memberB === uid))
+    .map(([id, data]) => conversationSummary(id, data, uid, profiles, statuses))
+    .filter(Boolean)
+    .sort((a, b) => b.updatedAt - a.updatedAt || (a.lastKey < b.lastKey ? 1 : a.lastKey > b.lastKey ? -1 : 0)), [chats, uid, profiles, statuses]);
+  const markConversationAsRead = useCallback((id, key) => uid ? markRead(id, uid, key) : Promise.resolve(), [uid]);
+  const markNotificationAsRead = id => setNotifications(previous => previous.map(n => n.id === id ? { ...n, isRead: true } : n));
+  const markAllNotificationsAsRead = () => setNotifications(previous => previous.map(n => ({ ...n, isRead: true })));
 
   return (
-    <AppContext.Provider
-      value={{
-        user,
-        login,
-        logout,
-        conversations,
-        contacts,
-        notifications,
-        pushNotificationsEnabled,
-        setPushNotificationsEnabled,
-        darkModeEnabled,
-        setDarkModeEnabled,
-        soundEnabled,
-        setSoundEnabled,
-        markConversationAsRead,
-        sendMessage,
-        markNotificationAsRead,
-        markAllNotificationsAsRead,
-        totalUnreadMessages,
-        totalUnreadNotifications,
-      }}
-    >
+    <AppContext.Provider value={{
+      user, authLoading, appActive, firebaseConfigured, syncError,
+      contacts, conversations, reportError, markConversationAsRead,
+      login: authService.login, register: authService.register, logout: authService.logout,
+      notifications, markNotificationAsRead, markAllNotificationsAsRead,
+      totalUnreadMessages: conversations.reduce((sum, c) => sum + c.unreadCount, 0),
+      totalUnreadNotifications: notifications.filter(n => !n.isRead).length,
+      pushNotificationsEnabled, setPushNotificationsEnabled,
+      darkModeEnabled, setDarkModeEnabled, soundEnabled, setSoundEnabled,
+    }}>
       {children}
     </AppContext.Provider>
   );
-};
-
+}
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within an AppProvider');
-  }
+  if (!context) { throw new Error('useApp must be used within AppProvider'); }
   return context;
 };

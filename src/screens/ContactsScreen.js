@@ -8,14 +8,14 @@ import {
   TouchableOpacity,
   FlatList,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@react-native-vector-icons/ionicons/static';
 import { useApp } from '../context/AppContext';
 
 export default function ContactsScreen({ navigation }) {
-  const { contacts, conversations } = useApp();
+  const { contacts } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all'); // 'all' | 'online'
 
@@ -32,7 +32,7 @@ export default function ContactsScreen({ navigation }) {
       result = result.filter(
         (c) =>
           c.name.toLowerCase().includes(q) ||
-          c.phone.includes(q) ||
+
           c.email.toLowerCase().includes(q)
       );
     }
@@ -42,29 +42,7 @@ export default function ContactsScreen({ navigation }) {
 
   // Nhấn vào một người dùng để mở cuộc trò chuyện tương ứng
   const handleSelectContact = (contact) => {
-    const existing = conversations.find((c) => c.user.id === contact.id);
-
-    if (existing) {
-      navigation.navigate('ChatDetail', { conversation: existing });
-    } else {
-      const newConversation = {
-        id: `conv_${contact.id}`,
-        user: {
-          id: contact.id,
-          name: contact.name,
-          avatar: contact.avatar,
-          isOnline: contact.isOnline,
-        },
-        lastMessage: 'Bắt đầu cuộc trò chuyện...',
-        time: 'Vừa xong',
-        unreadCount: 0,
-        messages: [],
-      };
-      navigation.navigate('ChatDetail', {
-        conversation: newConversation,
-        contactData: contact,
-      });
-    }
+    navigation.navigate('ChatDetail', { peerId: contact.id });
   };
 
   const renderContactItem = ({ item }) => {
@@ -89,7 +67,7 @@ export default function ContactsScreen({ navigation }) {
         <View style={styles.infoWrapper}>
           <Text style={styles.contactName}>{item.name}</Text>
           <Text style={styles.contactBio} numberOfLines={1}>
-            {item.bio || item.phone}
+            {item.email}
           </Text>
         </View>
 
@@ -129,7 +107,7 @@ export default function ContactsScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Header */}
@@ -151,7 +129,7 @@ export default function ContactsScreen({ navigation }) {
           <Ionicons name="search" size={18} color="#9CA3AF" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Tìm kiếm theo tên hoặc số điện thoại..."
+            placeholder="Tìm kiếm theo tên hoặc email..."
             placeholderTextColor="#9CA3AF"
             value={searchQuery}
             onChangeText={setSearchQuery}

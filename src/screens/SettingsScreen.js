@@ -8,14 +8,15 @@ import {
   Switch,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@react-native-vector-icons/ionicons/static';
+import { errorMessage } from '../services/errors';
 import { useApp } from '../context/AppContext';
 
-export default function SettingsScreen({ navigation }) {
+export default function SettingsScreen() {
   const {
     user,
     logout,
@@ -39,10 +40,8 @@ export default function SettingsScreen({ navigation }) {
         {
           text: 'Đăng xuất',
           style: 'destructive',
-          onPress: () => {
-            logout();
-            // Quay lại màn hình Đăng nhập
-            navigation.replace('Login');
+          onPress: async () => {
+            try { await logout(); } catch (error) { Alert.alert('Không thể đăng xuất', errorMessage(error)); }
           },
         },
       ]
@@ -54,7 +53,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Header */}
@@ -83,10 +82,10 @@ export default function SettingsScreen({ navigation }) {
           </View>
 
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>{user?.name || 'Nguyễn Văn A'}</Text>
-            <Text style={styles.profileUsername}>{user?.username || '@nguyenvana'}</Text>
+            <Text style={styles.profileName}>{user?.name || 'Người dùng'}</Text>
+            <Text style={styles.profileUsername}>{user?.email || ''}</Text>
             <Text style={styles.profileContact}>
-              {user?.email || 'nguyenvana@gmail.com'} • {user?.phone || '0912 345 678'}
+              {user?.email || ''}
             </Text>
 
             <View style={styles.statusBadge}>

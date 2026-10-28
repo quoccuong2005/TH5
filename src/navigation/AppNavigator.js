@@ -1,14 +1,16 @@
 // src/navigation/AppNavigator.js
 import React from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@react-native-vector-icons/ionicons/static';
 
 import { useApp } from '../context/AppContext';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
 import HomeScreen from '../screens/HomeScreen';
 import ContactsScreen from '../screens/ContactsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
@@ -102,21 +104,31 @@ function MainTabNavigator() {
 
 // Root Stack Navigator
 export default function AppNavigator() {
-  const { user } = useApp();
+  const { user, authLoading, syncError } = useApp();
+  if (authLoading) { return <View style={styles.loading}><ActivityIndicator size="large" color="#4F46E5" /><Text>Đang khôi phục đăng nhập…</Text></View>; }
 
   return (
+    <View style={styles.root}>
+      {user && syncError ? <Text accessibilityRole="alert" style={styles.error}>{syncError}</Text> : null}
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName={user ? 'Main' : 'Login'}
+        key={user ? user.id : 'guest'}
         screenOptions={{
           headerShown: false,
           animation: 'slide_from_right',
         }}
       >
-        <Stack.Screen name="Login" component={LoginScreen} />
-        <Stack.Screen name="Main" component={MainTabNavigator} />
-        <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+        {user ? <>
+          <Stack.Screen name="Main" component={MainTabNavigator} />
+          <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
+        </> : <>
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Register" component={RegisterScreen} />
+        </>}
       </Stack.Navigator>
     </NavigationContainer>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({ root: { flex: 1 }, loading: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }, error: { color: '#B91C1C', backgroundColor: '#FEF2F2', padding: 12 } });

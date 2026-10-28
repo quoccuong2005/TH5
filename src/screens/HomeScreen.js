@@ -8,14 +8,14 @@ import {
   TouchableOpacity,
   FlatList,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@react-native-vector-icons/ionicons/static';
 import { useApp } from '../context/AppContext';
 
 export default function HomeScreen({ navigation }) {
-  const { conversations, contacts, markConversationAsRead } = useApp();
+  const { conversations, contacts } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
 
   // Lọc danh sách cuộc trò chuyện theo tên hoặc tin nhắn gần nhất
@@ -35,31 +35,12 @@ export default function HomeScreen({ navigation }) {
   }, [contacts]);
 
   const handleOpenConversation = (conversation) => {
-    markConversationAsRead(conversation.id);
-    navigation.navigate('ChatDetail', { conversation });
+    navigation.navigate('ChatDetail', { peerId: conversation.user.id });
   };
 
   const handleOpenDirectChat = (contact) => {
     // Tìm cuộc trò chuyện sẵn có hoặc tạo mới
-    const existing = conversations.find((c) => c.user.id === contact.id);
-    if (existing) {
-      handleOpenConversation(existing);
-    } else {
-      const newConv = {
-        id: `conv_${contact.id}`,
-        user: {
-          id: contact.id,
-          name: contact.name,
-          avatar: contact.avatar,
-          isOnline: contact.isOnline,
-        },
-        lastMessage: 'Bắt đầu cuộc trò chuyện...',
-        time: 'Vừa xong',
-        unreadCount: 0,
-        messages: [],
-      };
-      navigation.navigate('ChatDetail', { conversation: newConv, contactData: contact });
-    }
+    navigation.navigate('ChatDetail', { peerId: contact.id });
   };
 
   const renderConversationItem = ({ item }) => {
@@ -114,7 +95,7 @@ export default function HomeScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Header */}
